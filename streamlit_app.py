@@ -65,14 +65,32 @@ class Skills(BaseModel):
 
 # ================= LLM Helpers ==================
 
-def get_llm(model_name: str = "groq/compound", temperature: float = 0):
-    api_key = settings.GROQ_API_KEY
+def get_llm(model_name: str = "llama-3.1-8b-instant", temperature: float = 0):
+    """Return a Groq LLM client with runtime validation.
+
+    Improvements:
+    - Reloads .env each call so updating the key doesn't require full server restart.
+    - Validates presence & basic format of the key.
+    - Provides clearer actionable error messages for 401 Invalid API Key.
+    """
+    # Reload env to pick up changes without restart
+    load_dotenv(override=True)
+    api_key = os.getenv("GROQ_API_KEY") or settings.GROQ_API_KEY
     if not api_key:
-        raise ValueError("GROQ_API_KEY not set. Provide it in .env or environment variable.")
-    return ChatGroq(temperature=temperature, groq_api_key=api_key, model_name=model_name)
+        raise ValueError("GROQ_API_KEY missing. Add GROQ_API_KEY=... to your .env and restart.")
+    if not api_key.startswith("gsk_"):
+        raise ValueError("GROQ_API_KEY appears malformed (must start with 'gsk_'). Check your .env file.")
+    try:
+        return ChatGroq(temperature=temperature, groq_api_key=api_key, model_name=model_name)
+    except Exception as e:
+        msg = str(e)
+        if "401" in msg or "invalid_api_key" in msg.lower():
+            raise RuntimeError("Groq rejected the API key (401). Generate a fresh key at https://console.groq.com/keys and update .env") from e
+        raise
 
 def parse_job_description(job_description: str) -> List[str]:
-    llm = get_llm(model_name="qwen/qwen3-32b")
+    # Use a larger reasoning-capable model for extraction if available; fallback is llama-3.1-8b-instant
+    llm = get_llm(model_name="llama-3.3-70b-versatile")
     structured_llm = llm.with_structured_output(Skills)
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a senior technical recruiter. Extract the key technical skills from the job description."),
@@ -95,7 +113,7 @@ def generate_questions_and_answers(skills: List[str], difficulty: str, max_items
     difficulty_label = difficulty_map.get(difficulty.lower(), "Intermediate-level")
 
     # Question generation
-    llm_q = get_llm(model_name="groq/compound", temperature=0.4)
+    llm_q = get_llm(model_name="llama-3.1-8b-instant", temperature=0.4)
     prompt_q = ChatPromptTemplate.from_messages([
         ("system", f"You are a technical hiring manager. Generate one concise, practical, {difficulty_label} interview question for the following skill. Only provide the question text itself."),
         ("human", "Skill: {skill}")
@@ -103,7 +121,7 @@ def generate_questions_and_answers(skills: List[str], difficulty: str, max_items
     chain_q = prompt_q | llm_q | StrOutputParser()
 
     # Answer key generation
-    llm_a = get_llm(model_name="groq/compound", temperature=0)
+    llm_a = get_llm(model_name="llama-3.1-8b-instant", temperature=0)
     prompt_a = ChatPromptTemplate.from_messages([
         ("system", "You are an expert interviewer. Provide a concise, high-quality exemplary answer (3-6 sentences) to the following technical interview question. Avoid fluff."),
         ("human", "Question: {question}")
@@ -150,9 +168,9 @@ Ideal Answers (condensed):
 """
 
     models_to_try = [
-        "groq/compound",            # primary (as configured elsewhere)
-        "qwen/qwen3-32b",           # fallback 1
-        "llama-3.1-8b-instant"      # fallback 2 (lighter)
+        "llama-3.1-70b-versatile",  # strongest
+        "llama-3.1-8b-instant",     # faster fallback
+        "mixtral-8x7b-32768"        # diversity fallback
     ]
 
     last_err = None
@@ -195,6 +213,14 @@ with st.sidebar:
     difficulty = st.selectbox("Difficulty", ["basic", "intermediate", "difficult"], index=1)
     candidate_name = st.text_input("Candidate Full Name")
     start_btn = st.button("Start Interview", type="primary")
+    # --- API Key diagnostics ---
+    load_dotenv(override=True)
+    current_key = os.getenv("GROQ_API_KEY", "")
+    if current_key:
+        masked = current_key[:8] + "..." + current_key[-5:]
+        st.caption(f"API Key detected: {masked} (len={len(current_key)})")
+    else:
+        st.warning("No GROQ_API_KEY found in environment.")
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = None
@@ -236,8 +262,16 @@ if start_btn and not st.session_state.session_id:
         db = SessionLocal()
         try:
             log("Starting job description parsing")
-            with st.spinner("Parsing job description..."):
-                skills = parse_job_description(jd_text)
+            try:
+                with st.spinner("Parsing job description..."):
+                    skills = parse_job_description(jd_text)
+            except Exception as parse_err:
+                if '401' in str(parse_err):
+                    st.error("Groq API rejected the key (401). Create a NEW key at console.groq.com/keys, update .env, then press 'R' to rerun.")
+                else:
+                    st.error(f"Failed parsing JD: {parse_err}")
+                log(f"JD parse failure: {parse_err}")
+                skills = []
             log(f"Extracted skills: {skills}")
 
             st.write("Generating questions and ideal answers:")
@@ -268,20 +302,26 @@ if start_btn and not st.session_state.session_id:
             try:
                 difficulty_map = {"basic": "Beginner-level", "intermediate": "Intermediate-level", "difficult": "Advanced-level"}
                 difficulty_label = difficulty_map.get(difficulty.lower(), "Intermediate-level")
-                llm_q = get_llm(model_name="groq/compound", temperature=0.4)
+                llm_q = get_llm(model_name="llama-3.1-8b-instant", temperature=0.4)
                 prompt_q = ChatPromptTemplate.from_messages([
                     ("system", f"You are a technical hiring manager. Generate one concise, practical, {difficulty_label} interview question for the following skill. Only provide the question text itself."),
                     ("human", "Skill: {skill}")
                 ])
                 chain_q = prompt_q | llm_q | StrOutputParser()
 
-                llm_a = get_llm(model_name="groq/compound", temperature=0)
+                llm_a = get_llm(model_name="llama-3.1-8b-instant", temperature=0)
                 prompt_a = ChatPromptTemplate.from_messages([
                     ("system", "You are an expert interviewer. Provide a concise, high-quality exemplary answer (3-6 sentences) to the following technical interview question. Avoid fluff."),
                     ("human", "Question: {question}")
                 ])
                 chain_a = prompt_a | llm_a | StrOutputParser()
             except Exception as chain_err:
+                user_msg = "Failed to initialize language models. "
+                if '401' in str(chain_err):
+                    user_msg += "(401 Invalid API Key) Generate a new key at console.groq.com, update .env, and press R to rerun."
+                else:
+                    user_msg += str(chain_err)
+                st.error(user_msg)
                 log(f"Failed to initialize LLM chains: {chain_err}")
                 chain_q = chain_a = None
 

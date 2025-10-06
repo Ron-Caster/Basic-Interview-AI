@@ -204,13 +204,13 @@ def time_left(start_ts: float) -> int:
 
 # ================= Streamlit UI =================
 st.set_page_config(page_title="AI Interview", page_icon="🤖", layout="wide")
-st.title("🤖 AI Technical Interview")
+st.title("🤖 AI Bot for Technical Interview")
 
 # Sidebar config
 with st.sidebar:
     st.header("Session")
     jd_file = st.file_uploader("Upload Job Description (jd.txt)", type=["txt"])    
-    difficulty = st.selectbox("Difficulty", ["basic", "intermediate", "difficult"], index=1)
+    difficulty = st.selectbox("Difficulty", ["Basic", "Intermediate", "Expert"], index=1)
     candidate_name = st.text_input("Candidate Full Name")
     start_btn = st.button("Start Interview", type="primary")
     # --- API Key diagnostics ---

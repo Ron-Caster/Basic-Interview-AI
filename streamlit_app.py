@@ -213,14 +213,6 @@ with st.sidebar:
     difficulty = st.selectbox("Difficulty", ["Basic", "Intermediate", "Expert"], index=1)
     candidate_name = st.text_input("Candidate Full Name")
     start_btn = st.button("Start Interview", type="primary")
-    # --- API Key diagnostics ---
-    load_dotenv(override=True)
-    current_key = os.getenv("GROQ_API_KEY", "")
-    if current_key:
-        masked = current_key[:8] + "..." + current_key[-5:]
-        st.caption(f"API Key detected: {masked} (len={len(current_key)})")
-    else:
-        st.warning("No GROQ_API_KEY found in environment.")
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = None

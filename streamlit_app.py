@@ -204,7 +204,7 @@ def time_left(start_ts: float) -> int:
 
 # ================= Streamlit UI =================
 st.set_page_config(page_title="AI Interview", page_icon="🤖", layout="wide")
-st.title("🤖 AI Bot for Technical Interview")
+st.title("🤖 AI Based Interview Bot")
 
 # Sidebar config
 with st.sidebar:
